@@ -1,7 +1,7 @@
 {
   "name": "vi-clip",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.2",
   "author": "wwnetboy <https://github.com/wwnetboy>",
   "type": "module",
   "scripts": {
@@ -11,10 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
-    "@mui/icons-material": "^9.0.1",
-    "@mui/material": "^9.0.1",
+
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-process": "^2.3.1",

@@ -12,7 +12,24 @@ interface Props {
 
 export default function SettingsContent({ embedded }: Props) {
   const { i18n, t } = useTranslation();
-  const settings = useSettingsStore();
+  const themeMode = useSettingsStore((s) => s.themeMode);
+  const autostartEnabled = useSettingsStore((s) => s.autostartEnabled);
+  const minimizeToTray = useSettingsStore((s) => s.minimizeToTray);
+  const toastEnabled = useSettingsStore((s) => s.toastEnabled);
+  const shortcutKey = useSettingsStore((s) => s.shortcutKey);
+  const radialMenuEnabled = useSettingsStore((s) => s.radialMenuEnabled);
+  const clickMode = useSettingsStore((s) => s.clickMode);
+  const defaultEngine = useSettingsStore((s) => s.defaultEngine);
+  const apiUrl = useSettingsStore((s) => s.apiUrl);
+  const apiKey = useSettingsStore((s) => s.apiKey);
+  const model = useSettingsStore((s) => s.model);
+  const googleApiKey = useSettingsStore((s) => s.googleApiKey);
+  const translateProxy = useSettingsStore((s) => s.translateProxy);
+  const clipboardRetention = useSettingsStore((s) => s.clipboardRetention);
+  const loadSettings = useSettingsStore((s) => s.loadSettings);
+  const setSetting = useSettingsStore((s) => s.setSetting);
+  const setAutostart = useSettingsStore((s) => s.setAutostart);
+  const setMinimizeToTray = useSettingsStore((s) => s.setMinimizeToTray);
 
   const [recording, setRecording] = useState(false);
   const recordingRef = useRef(false);
@@ -21,8 +38,6 @@ export default function SettingsContent({ embedded }: Props) {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
-  const loadSettings = settings.loadSettings;
 
   useEffect(() => {
     loadSettings();
@@ -38,51 +53,51 @@ export default function SettingsContent({ embedded }: Props) {
   // ── Persist helpers ──
 
   const persistKey = useCallback(async (key: string, value: string) => {
-    await settings.setSetting(key, value);
-  }, [settings]);
+    await setSetting(key, value);
+  }, [setSetting]);
 
   const debouncedPersist = useCallback((dbKey: string, value: string, toastKey: string) => {
     if (debounceTimers.current[dbKey]) clearTimeout(debounceTimers.current[dbKey]);
     debounceTimers.current[dbKey] = setTimeout(async () => {
-      await settings.setSetting(dbKey, value);
+      await setSetting(dbKey, value);
       showToast(t(toastKey));
     }, 600);
-  }, [settings, showToast, t]);
+  }, [setSetting, showToast, t]);
 
   // ── Immediate-persist callbacks ──
 
   const handleThemeChange = useCallback(async (theme: string) => {
-    if (theme === settings.themeMode) return;
+    if (theme === themeMode) return;
     useSettingsStore.setState({ themeMode: theme as ThemeMode });
     document.documentElement.setAttribute("data-theme", resolveTheme(theme as ThemeMode));
     emit("theme-changed", { theme });
-    await settings.setSetting("theme", theme);
+    await setSetting("theme", theme);
     showToast(t("settings.toast.theme"));
-  }, [settings, showToast, t]);
+  }, [themeMode, setSetting, showToast, t]);
 
   const handleLangChange = useCallback(async (lang: string) => {
     if (lang === i18n.language) return;
     i18n.changeLanguage(lang);
     emit("language-changed", { language: lang });
-    await settings.setSetting("language", lang);
+    await setSetting("language", lang);
     invoke("update_tray_language").catch(console.error);
     showToast(t("settings.toast.language"));
-  }, [i18n, settings, showToast, t]);
+  }, [i18n, setSetting, showToast, t]);
 
   const handleAutostartChange = useCallback(async (enabled: boolean) => {
-    await settings.setAutostart(enabled);
+    await setAutostart(enabled);
     showToast(t("settings.toast.startup"));
-  }, [settings, showToast, t]);
+  }, [setAutostart, showToast, t]);
 
   const handleMinimizeToTrayChange = useCallback(async (enabled: boolean) => {
-    await settings.setMinimizeToTray(enabled);
+    await setMinimizeToTray(enabled);
     showToast(t("settings.toast.minimizeToTray"));
-  }, [settings, showToast, t]);
+  }, [setMinimizeToTray, showToast, t]);
 
   const handleShortcutChange = useCallback(async (newKey: string) => {
-    const oldKey = settings.shortcutKey;
+    const oldKey = shortcutKey;
     useSettingsStore.setState({ shortcutKey: newKey });
-    await settings.setSetting("shortcut_key", newKey);
+    await setSetting("shortcut_key", newKey);
     if (oldKey !== newKey) {
       try {
         await invoke("update_shortcut", { oldShortcut: oldKey, newShortcut: newKey });
@@ -91,18 +106,18 @@ export default function SettingsContent({ embedded }: Props) {
       }
     }
     showToast(t("settings.toast.shortcut"));
-  }, [settings, showToast, t]);
+  }, [shortcutKey, setSetting, showToast, t]);
 
   const handleRadialMenuChange = useCallback(async (enabled: boolean) => {
     useSettingsStore.setState({ radialMenuEnabled: enabled });
-    await settings.setSetting("radial_menu_enabled", enabled ? "1" : "0");
+    await setSetting("radial_menu_enabled", enabled ? "1" : "0");
     try {
       await invoke("set_radial_menu_enabled", { enabled });
     } catch (e) {
       console.error("Failed to set radial menu enabled:", e);
     }
     showToast(t("settings.toast.radialMenu"));
-  }, [settings, showToast, t]);
+  }, [setSetting, showToast, t]);
 
   const handleClickModeChange = useCallback(async (mode: string) => {
     useSettingsStore.setState({ clickMode: mode });
@@ -232,49 +247,49 @@ export default function SettingsContent({ embedded }: Props) {
       )}
 
       <BasicSettingsSection
-        themeMode={settings.themeMode}
+        themeMode={themeMode}
         onThemeChange={handleThemeChange}
         language={i18n.language}
         onLanguageChange={handleLangChange}
-        autostartEnabled={settings.autostartEnabled}
+        autostartEnabled={autostartEnabled}
         onAutostartChange={handleAutostartChange}
-        minimizeToTray={settings.minimizeToTray}
+        minimizeToTray={minimizeToTray}
         onMinimizeToTrayChange={handleMinimizeToTrayChange}
-        toastEnabled={settings.toastEnabled}
+        toastEnabled={toastEnabled}
         onToastChange={handleToastChange}
       />
 
       <ShortcutSection
-        shortcutKey={settings.shortcutKey}
+        shortcutKey={shortcutKey}
         onShortcutChange={handleShortcutChange}
         recording={recording}
         onStartRecording={startRecording}
         onStopRecording={stopRecording}
-        radialMenuEnabled={settings.radialMenuEnabled}
+        radialMenuEnabled={radialMenuEnabled}
         onRadialMenuChange={handleRadialMenuChange}
-        clickMode={settings.clickMode}
+        clickMode={clickMode}
         onClickModeChange={handleClickModeChange}
       />
 
       <TranslationSection
-        engine={settings.defaultEngine}
+        engine={defaultEngine}
         onEngineChange={handleEngineChange}
-        apiUrl={settings.apiUrl}
+        apiUrl={apiUrl}
         onApiUrlChange={handleApiUrlChange}
-        apiKey={settings.apiKey}
+        apiKey={apiKey}
         onApiKeyChange={handleApiKeyChange}
-        model={settings.model}
+        model={model}
         onModelChange={handleModelChange}
-        googleApiKey={settings.googleApiKey}
+        googleApiKey={googleApiKey}
         onGoogleApiKeyChange={handleGoogleApiKeyChange}
-        translateProxy={settings.translateProxy}
+        translateProxy={translateProxy}
         onTranslateProxyChange={handleTranslateProxyChange}
       />
 
       <StorageSection
         storagePath={storagePath}
         setStoragePath={setStoragePath}
-        retention={settings.clipboardRetention}
+        retention={clipboardRetention}
         onRetentionChange={handleRetentionChange}
       />
 

@@ -1,19 +1,12 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { ClipboardRecord } from "../types";
 
 type UnlistenFn = () => void;
 
 export const CLIP_TYPES = ["all", "text", "image", "link", "file"] as const;
 export type ClipType = (typeof CLIP_TYPES)[number];
-
-interface ClipboardRecord {
-  id: string;
-  type: "text" | "image" | "link" | "file";
-  content: string;
-  source_app: string;
-  created_at: string;
-}
 
 interface ClipboardState {
   records: ClipboardRecord[];
@@ -136,7 +129,6 @@ export const useClipboardStore = create<ClipboardState>((set, get) => ({
 
   pasteRecord: async (record: ClipboardRecord) => {
     try {
-      console.error("[frontend] pasteRecord called, type=", record.type, "content len=", record.content?.length);
       if (record.type === "image") {
         await invoke("paste_image", { path: record.content });
       } else if (record.type === "file") {
@@ -144,7 +136,6 @@ export const useClipboardStore = create<ClipboardState>((set, get) => ({
       } else {
         await invoke("paste_text", { text: record.content });
       }
-      console.error("[frontend] pasteRecord invoke completed");
     } catch (e) {
       console.error("[frontend] Paste failed:", e);
     }

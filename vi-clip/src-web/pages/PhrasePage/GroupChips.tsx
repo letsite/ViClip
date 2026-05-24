@@ -1,14 +1,7 @@
-import { useRef, useEffect } from "react";
+import { memo, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Icons } from "../../components/Icons";
-
-interface PhraseGroup {
-  id: string;
-  name: string;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
+import type { PhraseGroup } from "../../types";
 
 interface GroupChipsProps {
   groups: PhraseGroup[];
@@ -19,7 +12,7 @@ interface GroupChipsProps {
   onAddPhrase: () => void;
 }
 
-export function GroupChips({
+export const GroupChips = memo(function GroupChips({
   groups,
   selectedGroupId,
   onSelectGroup,
@@ -70,4 +63,4 @@ export function GroupChips({
       )}
     </div>
   );
-}
+});

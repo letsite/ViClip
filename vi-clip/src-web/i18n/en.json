@@ -2,10 +2,7 @@
   "brand": {
     "name": "ViClip"
   },
-  "sidebar": {
-    "features": "Features",
-    "tools": "Tools"
-  },
+  "sidebar": {},
   "tabs": {
     "clipboard": "Clipboard",
     "phrases": "Quick Phrases",
@@ -55,18 +52,25 @@
     "clickModeSingle": "Single Click",
     "clickModeDouble": "Double Click",
     "toastPaste": "Paste Notification",
+    "githubRepo": "GitHub Repository",
+    "checkUpdate": "Check for Updates",
+    "checking": "Checking...",
+    "noUpdate": "Already up to date",
+    "updateAvailable": "New version available",
+    "downloadUpdate": "Download & Install",
+    "downloading": "Downloading...",
     "copied": "Copied to clipboard",
     "copyLabel": "Copied",
     "copyImage": "Image copied",
     "copyFile": "File copied",
-    "rightClick": "Right Click",
+
     "shortcutPlaceholder": "Click record button to set keyboard shortcut",
     "recordShortcut": "Custom",
     "stopRecord": "Stop",
     "recording": "Press shortcut combination...",
     "storage": "Storage",
     "about": "About",
-    "version": "Version",
+    "version": "Software Version",
     "copyright": "Copyright",
     "storagePath": "File Storage Location",
     "storagePathHint": "Changing file location takes effect after restart",
@@ -147,6 +151,16 @@
   },
   "radialMenu": {
     "empty": "No items"
+  },
+  "contextMenu": {
+    "paste": "Paste",
+    "copyContent": "Copy Content",
+    "saveAsPhrase": "Save as Phrase",
+    "noGroups": "No groups",
+    "delete": "Delete",
+    "edit": "Edit",
+    "openLink": "Open Link",
+    "openFileLocation": "Open File Location"
   },
   "imagePreview": {
     "title": "Image Preview",

@@ -1,24 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-
-interface PhraseGroup {
-  id: string;
-  name: string;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
-
-interface Phrase {
-  id: string;
-  group_id: string;
-  title: string;
-  content: string;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
+import type { PhraseGroup, Phrase } from "../types";
 
 interface PhraseState {
   groups: PhraseGroup[];
@@ -169,9 +152,7 @@ export const usePhraseStore = create<PhraseState>()((set, get) => {
 
   pastePhrase: async (phrase: Phrase) => {
     try {
-      console.error("[frontend] pastePhrase called, content len=", phrase.content?.length);
       await invoke("paste_text", { text: phrase.content });
-      console.error("[frontend] pastePhrase invoke completed");
     } catch (e) {
       console.error("[frontend] Paste failed:", e);
     }

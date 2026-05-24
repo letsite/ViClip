@@ -3,6 +3,39 @@ use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+use image::ImageEncoder;
+
+fn hash_bytes(data: &[u8]) -> u64 {
+    data.iter().fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+}
+
+fn encode_rgba_to_png(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+    let _ = encoder.write_image(rgba, w, h, image::ExtendedColorType::Rgba8);
+    bytes
+}
+
+fn save_thumbnail(image_dir: &std::path::Path, filename: &str, img: &image::DynamicImage) {
+    let mut thumb_dir = image_dir.to_path_buf();
+    thumb_dir.push("thumbs");
+    std::fs::create_dir_all(&thumb_dir).ok();
+    let thumb_path = thumb_dir.join(filename);
+    if thumb_path.exists() { return; }
+    let thumb_bytes = match generate_thumbnail(img, 200) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("clipboard: generate thumbnail failed: {}", e);
+            return;
+        }
+    };
+    if !thumb_bytes.is_empty() {
+        if let Ok(mut f) = std::fs::File::create(&thumb_path) {
+            let _ = f.write_all(&thumb_bytes);
+        }
+    }
+}
+
 fn is_url(text: &str) -> bool {
     let lower = text.trim().to_lowercase();
     lower.starts_with("http://")
@@ -19,6 +52,29 @@ fn is_previewable_image_file(path: &str) -> bool {
 }
 
 const IMAGE_PREVIEW_MAX_BYTES: u64 = 3 * 1024 * 1024;
+
+/// Generate a thumbnail from a decoded image, returning PNG-encoded bytes.
+/// The thumbnail is constrained to fit within max_size on its longest side.
+pub fn generate_thumbnail(img: &image::DynamicImage, max_size: u32) -> image::ImageResult<Vec<u8>> {
+    let (w, h) = (img.width(), img.height());
+    let scale = if w > max_size || h > max_size {
+        max_size as f32 / w.max(h) as f32
+    } else {
+        1.0
+    };
+    let thumb = if scale < 1.0 {
+        img.resize(
+            (w as f32 * scale) as u32,
+            (h as f32 * scale) as u32,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        img.clone()
+    };
+    let mut buf = std::io::Cursor::new(Vec::new());
+    thumb.write_to(&mut buf, image::ImageFormat::Png)?;
+    Ok(buf.into_inner())
+}
 
 fn is_image_file(path: &str) -> bool {
     let lower = path.to_lowercase();
@@ -60,23 +116,12 @@ fn import_image_file(app: &AppHandle, file_path: &str) -> bool {
     let img_w = decoded.width();
     let img_h = decoded.height();
 
-    let content_hash: u64 = rgba.iter()
-        .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
+    let content_hash: u64 = hash_bytes(&rgba);
     let content_hash_str = format!("{:016x}", content_hash);
     let filename = format!("{}.png", content_hash_str);
     let relative = format!("images/{}", filename);
 
-    let mut png_bytes: Vec<u8> = Vec::new();
-    {
-        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-        use image::ImageEncoder;
-        let _ = encoder.write_image(
-            &rgba,
-            img_w,
-            img_h,
-            image::ExtendedColorType::Rgba8,
-        );
-    }
+    let png_bytes = encode_rgba_to_png(&rgba, img_w, img_h);
 
     if png_bytes.is_empty() {
         return false;
@@ -95,34 +140,7 @@ fn import_image_file(app: &AppHandle, file_path: &str) -> bool {
 
     crate::paste::cache_image(relative.clone(), rgba.to_vec(), img_w, img_h, png_bytes.clone());
 
-    let mut thumb_dir = dir.clone();
-    thumb_dir.push("thumbs");
-    std::fs::create_dir_all(&thumb_dir).ok();
-    let thumb_path = thumb_dir.join(&filename);
-    if !thumb_path.exists() {
-        let (tw, th) = (decoded.width(), decoded.height());
-        let max_thumb: u32 = 200;
-        let scale = if tw > max_thumb || th > max_thumb {
-            max_thumb as f32 / tw.max(th) as f32
-        } else {
-            1.0
-        };
-        let thumb = if scale < 1.0 {
-            decoded.resize(
-                (tw as f32 * scale) as u32,
-                (th as f32 * scale) as u32,
-                image::imageops::FilterType::Triangle,
-            )
-        } else {
-            decoded
-        };
-        let mut thumb_buf = std::io::Cursor::new(Vec::new());
-        if thumb.write_to(&mut thumb_buf, image::ImageFormat::Png).is_ok() {
-            if let Ok(mut tf) = std::fs::File::create(&thumb_path) {
-                let _ = tf.write_all(&thumb_buf.into_inner());
-            }
-        }
-    }
+    save_thumbnail(&dir, &filename, &decoded);
 
     insert_and_emit(app, "image", &relative);
     true
@@ -154,7 +172,7 @@ fn get_clipboard_image_hash() -> u64 {
                     let ptr = GlobalLock(hglobal);
                     if !ptr.is_null() {
                         let bytes = std::slice::from_raw_parts(ptr as *const u8, size);
-                        result = bytes.iter().fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
+                        result = hash_bytes(bytes);
                         let _ = GlobalUnlock(hglobal);
                         let _ = CloseClipboard();
                         return result;
@@ -177,7 +195,7 @@ fn get_clipboard_image_hash() -> u64 {
                         // Hash DIB header (40 bytes) + first 1024 bytes of pixel data
                         let hash_len = (40 + 1024).min(size);
                         let bytes = std::slice::from_raw_parts(src, hash_len);
-                        result = bytes.iter().fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
+                        result = hash_bytes(bytes);
                     }
                     let _ = GlobalUnlock(hglobal);
                 }
@@ -441,6 +459,98 @@ pub fn sync_monitor_cache(handle: &AppHandle) {
     }
 }
 
+fn save_monitor_image(
+    handle: &AppHandle,
+    rgba_vec: Vec<u8>,
+    img_w: u32,
+    img_h: u32,
+) -> bool {
+    let content_hash: u64 = hash_bytes(&rgba_vec);
+    let content_hash_str = format!("{:016x}", content_hash);
+    let filename = format!("{}.png", content_hash_str);
+    let relative = format!("images/{}", filename);
+
+    let png_bytes = encode_rgba_to_png(&rgba_vec, img_w, img_h);
+
+    if png_bytes.is_empty() {
+        return false;
+    }
+
+    let mut dir = crate::db::get_storage_dir(handle);
+    dir.push("images");
+    std::fs::create_dir_all(&dir).ok();
+
+    let filepath = dir.join(&filename);
+
+    if !filepath.exists() {
+        if let Ok(mut f) = std::fs::File::create(&filepath) {
+            let _ = f.write_all(&png_bytes);
+        }
+    }
+
+    log::info!("clipboard: recorded image {}x{} hash={}", img_w, img_h, content_hash_str);
+
+    crate::paste::cache_image(relative.clone(), rgba_vec, img_w, img_h, png_bytes.clone());
+
+    if let Ok(decoded) = image::load_from_memory(&png_bytes) {
+        save_thumbnail(&dir, &filename, &decoded);
+    }
+
+    insert_and_emit(handle, "image", &relative);
+    true
+}
+
+fn handle_monitor_text(handle: &AppHandle) {
+    if let Ok(text) = handle.clipboard().read_text() {
+        let text = text.trim().to_string();
+        if !text.is_empty() && text != *LAST_CLIPBOARD_TEXT.lock().unwrap() {
+            *LAST_CLIPBOARD_TEXT.lock().unwrap() = text.clone();
+            let record_type = if is_url(&text) { "link" } else { "text" };
+            insert_and_emit(handle, record_type, &text);
+        } else if !text.is_empty() {
+            let record_type = if is_url(&text) { "link" } else { "text" };
+            insert_and_emit(handle, record_type, &text);
+        }
+    }
+}
+
+fn handle_monitor_files(handle: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(files) = read_clipboard_files() {
+            let key = files.join("|");
+            {
+                let mut cached = LAST_CLIPBOARD_FILES_KEY.lock().unwrap();
+                if key == *cached {
+                    for file_path in &files {
+                        if file_path.trim().is_empty() { continue; }
+                        if is_previewable_image_file(file_path) || is_image_file(file_path) {
+                            import_image_file(handle, file_path);
+                            continue;
+                        }
+                        insert_and_emit(handle, "file", file_path);
+                    }
+                    return;
+                }
+                *cached = key.clone();
+            }
+
+            for file_path in files {
+                if file_path.trim().is_empty() {
+                    continue;
+                }
+                if is_previewable_image_file(&file_path) || is_image_file(&file_path) {
+                    if import_image_file(handle, &file_path) {
+                        continue;
+                    }
+                    continue;
+                }
+                insert_and_emit(handle, "file", &file_path);
+            }
+        }
+    }
+}
+
 pub fn start_monitor(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.clone();
 
@@ -536,7 +646,7 @@ pub fn start_monitor(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             if let Ok(image) = handle.clipboard().read_image() {
                 let rgba = image.rgba();
                 if !rgba.is_empty() && image.width() > 0 && image.height() > 0 {
-                    let hash = rgba.iter().take(400).fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
+                    let hash = hash_bytes(&rgba[..400.min(rgba.len())]);
                     let mut cached_hash = LAST_CLIPBOARD_IMAGE_HASH.lock().unwrap();
                     if hash != *cached_hash {
                         *cached_hash = hash;
@@ -547,78 +657,7 @@ pub fn start_monitor(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         }
 
         if let Some((rgba_vec, img_w, img_h)) = image_data.take() {
-            // Content hash as filename — same image reuses the same file on disk
-            let content_hash: u64 = rgba_vec.iter()
-                .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
-            let content_hash_str = format!("{:016x}", content_hash);
-            let filename = format!("{}.png", content_hash_str);
-            let relative = format!("images/{}", filename);
-
-            let mut png_bytes: Vec<u8> = Vec::new();
-            {
-                let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-                use image::ImageEncoder;
-                let _ = encoder.write_image(
-                    &rgba_vec,
-                    img_w,
-                    img_h,
-                    image::ExtendedColorType::Rgba8,
-                );
-            }
-
-            if !png_bytes.is_empty() {
-                let mut dir = crate::db::get_storage_dir(&handle);
-                dir.push("images");
-                std::fs::create_dir_all(&dir).ok();
-
-                let filepath = dir.join(&filename);
-
-                // Only write file if it doesn't exist (same hash = same content)
-                if !filepath.exists() {
-                    if let Ok(mut f) = std::fs::File::create(&filepath) {
-                        let _ = f.write_all(&png_bytes);
-                    }
-                }
-
-                log::info!("clipboard: recorded image {}x{} hash={}", img_w, img_h, content_hash_str);
-
-                crate::paste::cache_image(relative.clone(), rgba_vec, img_w, img_h, png_bytes.clone());
-
-                // Generate thumbnail if missing
-                let mut thumb_dir = dir.clone();
-                thumb_dir.push("thumbs");
-                std::fs::create_dir_all(&thumb_dir).ok();
-                let thumb_path = thumb_dir.join(&filename);
-                if !thumb_path.exists() {
-                    if let Ok(decoded) = image::load_from_memory(&png_bytes) {
-                        let (tw, th) = (decoded.width(), decoded.height());
-                        let max_thumb: u32 = 200;
-                        let scale = if tw > max_thumb || th > max_thumb {
-                            max_thumb as f32 / tw.max(th) as f32
-                        } else {
-                            1.0
-                        };
-                        let thumb = if scale < 1.0 {
-                            decoded.resize(
-                                (tw as f32 * scale) as u32,
-                                (th as f32 * scale) as u32,
-                                image::imageops::FilterType::Triangle,
-                            )
-                        } else {
-                            decoded
-                        };
-                        let mut thumb_buf = std::io::Cursor::new(Vec::new());
-                        if thumb.write_to(&mut thumb_buf, image::ImageFormat::Png).is_ok() {
-                            if let Ok(mut tf) = std::fs::File::create(&thumb_path) {
-                                let _ = tf.write_all(&thumb_buf.into_inner());
-                            }
-                        }
-                    }
-                }
-
-                insert_and_emit(&handle, "image", &relative);
-                image_recorded = true;
-            }
+            image_recorded = save_monitor_image(&handle, rgba_vec, img_w, img_h);
         }
 
         // Handle re-copy of same image: sequence changed but raw hash didn't.
@@ -627,8 +666,7 @@ pub fn start_monitor(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             #[cfg(target_os = "windows")]
             {
                 if let Some((rgba_vec, _img_w, _img_h)) = read_clipboard_image_raw() {
-                    let content_hash: u64 = rgba_vec.iter()
-                        .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
+                    let content_hash: u64 = hash_bytes(&rgba_vec);
                     let content_hash_str = format!("{:016x}", content_hash);
                     let relative = format!("images/{}.png", content_hash_str);
                     insert_and_emit(&handle, "image", &relative);
@@ -648,57 +686,10 @@ pub fn start_monitor(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                 }
             }
         } else {
-            if let Ok(text) = handle.clipboard().read_text() {
-                let text = text.trim().to_string();
-                if !text.is_empty() && text != *LAST_CLIPBOARD_TEXT.lock().unwrap() {
-                    *LAST_CLIPBOARD_TEXT.lock().unwrap() = text.clone();
-                    let record_type = if is_url(&text) { "link" } else { "text" };
-                    insert_and_emit(&handle, record_type, &text);
-                } else if !text.is_empty() {
-                    // Same text re-copied (sequence changed, text matches cache)
-                    let record_type = if is_url(&text) { "link" } else { "text" };
-                    insert_and_emit(&handle, record_type, &text);
-                }
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                if let Some(files) = read_clipboard_files() {
-                    let key = files.join("|");
-                    {
-                        let mut cached = LAST_CLIPBOARD_FILES_KEY.lock().unwrap();
-                        if key == *cached {
-                            // Same file paths re-copied — insert new records
-                            for file_path in &files {
-                                if file_path.trim().is_empty() { continue; }
-                                if is_previewable_image_file(file_path) || is_image_file(file_path) {
-                                    import_image_file(&handle, file_path);
-                                    continue;
-                                }
-                                insert_and_emit(&handle, "file", file_path);
-                            }
-                            continue;
-                        }
-                        *cached = key.clone();
-                    }
-
-                        for file_path in files {
-                            if file_path.trim().is_empty() {
-                                continue;
-                            }
-                            if is_previewable_image_file(&file_path) || is_image_file(&file_path) {
-                                if import_image_file(&handle, &file_path) {
-                                    continue;
-                                }
-                                // If import failed and it's an image file, skip (don't record raw path)
-                                continue;
-                            }
-                            insert_and_emit(&handle, "file", &file_path);
-                        }
-                    }
-                }
-            }
+            handle_monitor_text(&handle);
+            handle_monitor_files(&handle);
         }
+    }
     });
 
     Ok(())

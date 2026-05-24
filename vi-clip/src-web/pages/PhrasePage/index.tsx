@@ -21,24 +21,22 @@ export default function PhrasePage() {
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameName, setRenameName] = useState("");
 
-  const {
-    groups,
-    phrases,
-    selectedGroupId,
-    search,
-    loading,
-    setSearch,
-    setSelectedGroup,
-    init,
-    loadPhrases,
-    createGroup,
-    updateGroup,
-    createPhrase,
-    updatePhrase,
-    deletePhrase,
-    deleteGroup,
-    pastePhrase,
-  } = usePhraseStore();
+  const groups = usePhraseStore((s) => s.groups);
+  const phrases = usePhraseStore((s) => s.phrases);
+  const selectedGroupId = usePhraseStore((s) => s.selectedGroupId);
+  const search = usePhraseStore((s) => s.search);
+  const loading = usePhraseStore((s) => s.loading);
+  const setSearch = usePhraseStore((s) => s.setSearch);
+  const setSelectedGroup = usePhraseStore((s) => s.setSelectedGroup);
+  const init = usePhraseStore((s) => s.init);
+  const loadPhrases = usePhraseStore((s) => s.loadPhrases);
+  const createGroup = usePhraseStore((s) => s.createGroup);
+  const updateGroup = usePhraseStore((s) => s.updateGroup);
+  const createPhrase = usePhraseStore((s) => s.createPhrase);
+  const updatePhrase = usePhraseStore((s) => s.updatePhrase);
+  const deletePhrase = usePhraseStore((s) => s.deletePhrase);
+  const deleteGroup = usePhraseStore((s) => s.deleteGroup);
+  const pastePhrase = usePhraseStore((s) => s.pastePhrase);
 
   useEffect(() => {
     init();

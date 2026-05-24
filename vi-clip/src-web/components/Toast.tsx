@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useToastStore } from "../stores/toastStore";
 import { useTranslation } from "react-i18next";
+import { useThemeSync } from "../hooks/useThemeSync";
 import "../i18n";
 
 interface ToastPayload {
@@ -24,7 +25,9 @@ export default function Toast() {
   const toastEnabledRef = useRef(true);
   const [langLoaded, setLangLoaded] = useState(false);
 
-  // Toast window: load language and theme
+  useThemeSync();
+
+  // Toast window: load language and toast settings
   useEffect(() => {
     if (!isToastWindow) return;
     const loadSettings = async () => {
@@ -34,11 +37,6 @@ export default function Toast() {
         if (lang && lang !== i18n.language) {
           await i18n.changeLanguage(lang);
         }
-        const theme = await invoke<string>("get_setting", { key: "theme" });
-        const resolved = theme === "auto"
-          ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-          : (theme || "light");
-        document.documentElement.setAttribute("data-theme", resolved);
         const toastEnabled = await invoke<string>("get_setting", { key: "toast_enabled" });
         toastEnabledRef.current = toastEnabled !== "0";
       } catch (e) {

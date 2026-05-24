@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use tauri::Manager;
+
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to create HTTP client")
+    })
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TranslateResponse {
@@ -17,19 +28,18 @@ pub async fn translate(
     let source_lang = "auto".to_string();
 
     let state = app.state::<crate::db::DbState>();
-    let engine = {
+
+    // Read engine setting and check cache in a single lock acquisition
+    let engine: String;
+    {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        conn.query_row(
+        engine = conn.query_row(
             "SELECT value FROM settings WHERE key = 'default_translate_engine'",
             [],
             |row| row.get::<_, String>(0),
         )
-        .unwrap_or_else(|_| "google".to_string())
-    };
+        .unwrap_or_else(|_| "google".to_string());
 
-    // Check cache
-    {
-        let conn = state.conn.lock().map_err(|e| e.to_string())?;
         let cached: Option<String> = conn
             .query_row(
                 "SELECT target_text FROM translation_history WHERE source_text = ?1 AND target_lang = ?2 AND engine = ?3 ORDER BY created_at DESC LIMIT 1",
@@ -85,12 +95,12 @@ async fn translate_ai(
         ).unwrap_or_default();
         let m: String = conn.query_row(
             "SELECT value FROM settings WHERE key = 'ai_model'", [], |r| r.get(0),
-        ).unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
+        ).unwrap_or_else(|_| "gpt-4o-mini".to_string());
         (url, key, m)
     };
 
     if api_url.is_empty() || api_key.is_empty() {
-        return Err("AI 翻译未配置，请在设置中填写 API 地址和 Key".to_string());
+        return Err("AI translation not configured. Please fill in the API URL and Key in settings".to_string());
     }
 
     let full_url = if api_url.contains("/chat/completions") || api_url.contains("/completions") {
@@ -107,12 +117,7 @@ async fn translate_ai(
         text = text
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    let resp = client
+    let resp = http_client()
         .post(&full_url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
@@ -124,21 +129,21 @@ async fn translate_ai(
             ],
             "temperature": 0.3
         }))
-        .send().await.map_err(|e| format!("AI 翻译请求失败: {}", e))?;
+        .send().await.map_err(|e| format!("AI translation request failed: {}", e))?;
 
     let status = resp.status();
-    let body_text = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let body_text = resp.text().await.map_err(|e| format!("Failed to read response: {}", e))?;
 
     if !status.is_success() {
-        return Err(format!("AI 翻译 HTTP {}: {}", status.as_u16(), &body_text[..body_text.len().min(80)]));
+        return Err(format!("AI translation HTTP {}: {}", status.as_u16(), &body_text[..body_text.len().min(80)]));
     }
 
     let json: serde_json::Value = serde_json::from_str(&body_text)
-        .map_err(|e| format!("解析响应失败: {}", e))?;
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let translated = json["choices"][0]["message"]["content"]
         .as_str()
-        .ok_or("AI 响应格式异常，未找到 choices[0].message.content")?
+        .ok_or("AI response format error: choices[0].message.content not found")?
         .trim()
         .to_string();
 
@@ -167,18 +172,17 @@ async fn translate_google(
         (key, proxy)
     };
 
-    let mut builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15));
-
-    if !proxy_url.is_empty() {
+    let client = if !proxy_url.is_empty() {
         let proxy = reqwest::Proxy::all(&proxy_url)
-            .map_err(|e| format!("代理配置无效 ({}): {}", proxy_url, e))?;
-        builder = builder.proxy(proxy);
-    }
-
-    let client = builder
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+            .map_err(|e| format!("Invalid proxy config ({}): {}", proxy_url, e))?;
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .proxy(proxy)
+            .build()
+            .map_err(|e| format!("Failed to create proxy HTTP client: {}", e))?
+    } else {
+        http_client().clone()
+    };
 
     if api_key.is_empty() {
         let resp = client
@@ -194,18 +198,18 @@ async fn translate_google(
             .send().await.map_err(|e| fmt_reqwest_error(&e))?;
 
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| format!("读取 Google 响应失败: {}", e))?;
+        let body = resp.text().await.map_err(|e| format!("Failed to read Google response: {}", e))?;
 
         if !status.is_success() {
-            return Err(format!("Google 翻译 HTTP {}: {}", status.as_u16(), &body[..body.len().min(80)]));
+            return Err(format!("Google translate HTTP {}: {}", status.as_u16(), &body[..body.len().min(80)]));
         }
 
         let json: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("解析 Google 响应失败: {}", e))?;
+            .map_err(|e| format!("Failed to parse Google response: {}", e))?;
 
         let translated = json[0][0][0]
             .as_str()
-            .unwrap_or("翻译失败")
+            .unwrap_or("Translation failed")
             .to_string();
 
         return Ok(TranslateResponse {
@@ -230,13 +234,13 @@ async fn translate_google(
         .map_err(|e| format!("解析 Google 响应失败: {}", e))?;
 
     if let Some(error) = json.get("error") {
-        let msg = error["message"].as_str().unwrap_or("未知错误");
-        return Err(format!("Google 翻译错误: {}", &msg[..msg.len().min(80)]));
+        let msg = error["message"].as_str().unwrap_or("Unknown error");
+        return Err(format!("Google translate error: {}", &msg[..msg.len().min(80)]));
     }
 
     let translated = json["data"]["translations"][0]["translatedText"]
         .as_str()
-        .unwrap_or("翻译失败")
+        .unwrap_or("Translation failed")
         .to_string();
 
     Ok(TranslateResponse {
@@ -248,11 +252,11 @@ async fn translate_google(
 
 fn fmt_reqwest_error(err: &reqwest::Error) -> String {
     if err.is_connect() {
-        "Google 翻译连接失败，请检查代理配置".to_string()
+        "Google translate connection failed, please check proxy settings".to_string()
     } else if err.is_timeout() {
-        "Google 翻译请求超时".to_string()
+        "Google translate request timed out".to_string()
     } else {
-        format!("Google 翻译请求失败: {}", err)
+        format!("Google translate request failed: {}", err)
     }
 }
 

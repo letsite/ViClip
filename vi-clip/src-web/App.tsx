@@ -6,8 +6,9 @@ import ClipboardPage from "./pages/ClipboardPage";
 import PhrasePage from "./pages/PhrasePage";
 import TranslationPage from "./pages/TranslationPage";
 import SettingsContent from "./components/SettingsContent";
-import { useSettingsStore, resolveTheme } from "./stores/settingsStore";
+import { useSettingsStore } from "./stores/settingsStore";
 import Toast from "./components/Toast";
+import { useThemeSync } from "./hooks/useThemeSync";
 import { Icons } from "./components/Icons";
 import i18n from "./i18n";
 
@@ -44,6 +45,8 @@ function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  useThemeSync(themeMode);
+
   const SIDEBAR_MIN = 60;
   const SIDEBAR_MAX = 130;
   const SIDEBAR_DEFAULT = 60;
@@ -54,19 +57,6 @@ function App() {
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
-
-  useEffect(() => {
-    const applyTheme = () => {
-      document.documentElement.setAttribute("data-theme", resolveTheme(themeMode));
-    };
-    applyTheme();
-
-    if (themeMode === "auto") {
-      const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      mq.addEventListener("change", applyTheme);
-      return () => mq.removeEventListener("change", applyTheme);
-    }
-  }, [themeMode]);
 
   const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

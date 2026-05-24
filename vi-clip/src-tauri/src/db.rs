@@ -8,11 +8,65 @@ pub struct DbState {
     pub conn: Mutex<Connection>,
 }
 
-fn db_path(app: &AppHandle) -> PathBuf {
-    let default_dir = app
-        .path()
-        .app_data_dir()
-        .expect("failed to get app data dir");
+const SCHEMA_SQL: &str = "
+    CREATE TABLE IF NOT EXISTS clipboard_records (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        source_app TEXT DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clipboard_created_at
+        ON clipboard_records(created_at);
+
+    CREATE TABLE IF NOT EXISTS phrase_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS phrases (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (group_id) REFERENCES phrase_groups(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS translation_history (
+        id TEXT PRIMARY KEY,
+        source_text TEXT NOT NULL,
+        target_text TEXT NOT NULL,
+        source_lang TEXT DEFAULT 'auto',
+        target_lang TEXT NOT NULL,
+        engine TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_translation_created_at
+        ON translation_history(created_at);
+
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+";
+
+fn default_data_dir() -> PathBuf {
+    let exe = std::env::current_exe().expect("failed to get exe path");
+    exe.parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("data")
+}
+
+fn db_path() -> PathBuf {
+    let default_dir = default_data_dir();
     let default_db = default_dir.join("data.db");
     std::fs::create_dir_all(&default_dir).ok();
 
@@ -71,69 +125,20 @@ pub fn get_storage_dir(app: &AppHandle) -> PathBuf {
         }
     }
     drop(conn);
-    app.path()
-        .app_data_dir()
-        .expect("failed to get app data dir")
+    default_data_dir()
 }
 
 pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let path = db_path(app);
+    let path = db_path();
     let conn = Connection::open(&path)?;
 
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-8000;",
     )?;
 
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS clipboard_records (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,
-            content TEXT NOT NULL,
-            source_app TEXT DEFAULT '',
-            created_at TEXT NOT NULL
-        );
+    conn.execute_batch(SCHEMA_SQL)?;
 
-        CREATE INDEX IF NOT EXISTS idx_clipboard_created_at
-            ON clipboard_records(created_at);
-
-        CREATE TABLE IF NOT EXISTS phrase_groups (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            sort_order INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS phrases (
-            id TEXT PRIMARY KEY,
-            group_id TEXT NOT NULL,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            sort_order INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (group_id) REFERENCES phrase_groups(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS translation_history (
-            id TEXT PRIMARY KEY,
-            source_text TEXT NOT NULL,
-            target_text TEXT NOT NULL,
-            source_lang TEXT DEFAULT 'auto',
-            target_lang TEXT NOT NULL,
-            engine TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_translation_created_at
-            ON translation_history(created_at);
-
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
+    conn.execute_batch("
         INSERT OR IGNORE INTO settings (key, value) VALUES ('clipboard_retention', '1month');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('default_translate_engine', 'google');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('theme', 'light');
@@ -143,7 +148,7 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         INSERT OR IGNORE INTO settings (key, value) VALUES ('radial_menu_enabled', '1');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('autostart', '0');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('minimize_to_tray', '0');
-        INSERT OR IGNORE INTO settings (key, value) VALUES ('shortcut_key', '');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('shortcut_key', 'Alt+V');
 
         UPDATE settings SET value = 'google' WHERE key = 'default_translate_engine' AND value = 'builtin';
         ",
@@ -612,23 +617,8 @@ pub fn get_image_thumbnail(app: AppHandle, path: String, max_size: u32) -> Resul
             .map_err(|e| format!("read image file: {}", e))?;
         let img = image::load_from_memory(&bytes)
             .map_err(|e| format!("decode image: {}", e))?;
-        let (w, h) = (img.width(), img.height());
-        let scale = if w > max_size || h > max_size {
-            max_size as f32 / w.max(h) as f32
-        } else {
-            1.0
-        };
-        let thumb = if scale < 1.0 {
-            let new_w = (w as f32 * scale) as u32;
-            let new_h = (h as f32 * scale) as u32;
-            img.resize(new_w, new_h, image::imageops::FilterType::Triangle)
-        } else {
-            img
-        };
-        let mut buf = std::io::Cursor::new(Vec::new());
-        thumb.write_to(&mut buf, image::ImageFormat::Png)
-            .map_err(|e| format!("encode thumbnail: {}", e))?;
-        let data = buf.into_inner();
+        let data = crate::clipboard::generate_thumbnail(&img, max_size)
+            .map_err(|e| format!("generate thumbnail: {}", e))?;
         // Save for future use
         std::fs::create_dir_all(&thumb_dir).ok();
         let _ = std::fs::write(&thumb_path, &data);
@@ -696,49 +686,7 @@ fn migrate_storage(app: &AppHandle, new_path: &str) -> Result<(), String> {
     let new_conn = Connection::open(&custom_db).map_err(|e| format!("open new db: {}", e))?;
 
     new_conn
-        .execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS clipboard_records (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                content TEXT NOT NULL,
-                source_app TEXT DEFAULT '',
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_clipboard_created_at ON clipboard_records(created_at);
-            CREATE TABLE IF NOT EXISTS phrase_groups (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                sort_order INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS phrases (
-                id TEXT PRIMARY KEY,
-                group_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                sort_order INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (group_id) REFERENCES phrase_groups(id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS translation_history (
-                id TEXT PRIMARY KEY,
-                source_text TEXT NOT NULL,
-                target_text TEXT NOT NULL,
-                source_lang TEXT DEFAULT 'auto',
-                target_lang TEXT NOT NULL,
-                engine TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_translation_created_at ON translation_history(created_at);
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            ",
-        )
+        .execute_batch(SCHEMA_SQL)
         .map_err(|e| format!("create schema: {}", e))?;
 
     // Copy settings to new DB
@@ -800,28 +748,9 @@ pub fn ensure_thumbnail(app: AppHandle, path: String) -> Result<String, String> 
     let bytes = std::fs::read(&base).map_err(|e| format!("read image: {}", e))?;
     let img = image::load_from_memory(&bytes).map_err(|e| format!("decode image: {}", e))?;
 
-    let (w, h) = (img.width(), img.height());
-    let max_thumb: u32 = 200;
-    let scale = if w > max_thumb || h > max_thumb {
-        max_thumb as f32 / w.max(h) as f32
-    } else {
-        1.0
-    };
-
-    let thumb = if scale < 1.0 {
-        img.resize(
-            (w as f32 * scale) as u32,
-            (h as f32 * scale) as u32,
-            image::imageops::FilterType::Triangle,
-        )
-    } else {
-        img
-    };
-
-    let mut buf = std::io::Cursor::new(Vec::new());
-    thumb.write_to(&mut buf, image::ImageFormat::Png).map_err(|e| format!("encode thumbnail: {}", e))?;
-
-    std::fs::write(&thumb_path, buf.into_inner()).map_err(|e| format!("write thumbnail: {}", e))?;
+    let thumb_bytes = crate::clipboard::generate_thumbnail(&img, 200)
+        .map_err(|e| format!("generate thumbnail: {}", e))?;
+    std::fs::write(&thumb_path, &thumb_bytes).map_err(|e| format!("write thumbnail: {}", e))?;
 
     Ok(thumb_path.to_string_lossy().to_string())
 }

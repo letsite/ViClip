@@ -2,10 +2,7 @@
   "brand": {
     "name": "ViClip"
   },
-  "sidebar": {
-    "features": "功能",
-    "tools": "工具"
-  },
+  "sidebar": {},
   "tabs": {
     "clipboard": "剪切板",
     "phrases": "快捷短语",
@@ -55,18 +52,25 @@
     "clickModeSingle": "单击复制",
     "clickModeDouble": "双击复制",
     "toastPaste": "粘贴提示弹窗",
+    "githubRepo": "GitHub 仓库",
+    "checkUpdate": "检查更新",
+    "checking": "正在检查...",
+    "noUpdate": "已是最新版本",
+    "updateAvailable": "发现新版本",
+    "downloadUpdate": "下载并安装",
+    "downloading": "正在下载...",
     "copied": "已复制到剪贴板",
     "copyLabel": "已复制",
     "copyImage": "已复制图片",
     "copyFile": "已复制文件",
-    "rightClick": "鼠标右键",
+
     "shortcutPlaceholder": "点击录制按钮设置键盘快捷键",
     "recordShortcut": "自定义",
     "stopRecord": "停止",
     "recording": "按下快捷键组合...",
     "storage": "存储",
     "about": "关于",
-    "version": "版本号",
+    "version": "软件版本",
     "copyright": "版权信息",
     "storagePath": "文件存储位置",
     "storagePathHint": "修改文件位置，重启后生效",
@@ -147,6 +151,16 @@
   },
   "radialMenu": {
     "empty": "暂无内容"
+  },
+  "contextMenu": {
+    "paste": "粘贴",
+    "copyContent": "复制内容",
+    "saveAsPhrase": "另存为快捷短语",
+    "noGroups": "暂无分组",
+    "delete": "删除",
+    "edit": "编辑",
+    "openLink": "打开链接",
+    "openFileLocation": "打开文件位置"
   },
   "imagePreview": {
     "title": "图片预览",

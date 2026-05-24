@@ -18,8 +18,6 @@ interface SettingsState {
   apiUrl: string;
   apiKey: string;
   model: string;
-  baiduAppId: string;
-  baiduSecret: string;
   googleApiKey: string;
   translateProxy: string;
   language: string;
@@ -44,12 +42,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   apiUrl: "",
   apiKey: "",
   model: "",
-  baiduAppId: "",
-  baiduSecret: "",
   googleApiKey: "",
   translateProxy: "",
   language: "zh-CN",
-  shortcutKey: "",
+  shortcutKey: "Alt+V",
   radialMenuEnabled: true,
   autostartEnabled: false,
   minimizeToTray: false,
@@ -67,12 +63,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         apiUrl: settings.ai_api_url || "",
         apiKey: settings.ai_api_key || "",
         model: settings.ai_model || "",
-        baiduAppId: settings.baidu_appid || "",
-        baiduSecret: settings.baidu_secret || "",
         googleApiKey: settings.google_api_key || "",
         translateProxy: settings.translate_proxy || "",
         language: settings.language || "zh-CN",
-        shortcutKey: settings.shortcut_key || "",
+        shortcutKey: settings.shortcut_key || "Alt+V",
         radialMenuEnabled: settings.radial_menu_enabled !== "0",
         toastEnabled: settings.toast_enabled !== "0",
         clickMode: settings.click_mode || "single",

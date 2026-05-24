@@ -3,3 +3,11 @@ releases/
 .claude/
 docs/
 CLAUDE.md
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Environment files
+.env
+.env.*

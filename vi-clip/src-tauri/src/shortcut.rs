@@ -303,7 +303,9 @@ pub fn update_shortcut(
     old_shortcut: String,
     new_shortcut: String,
 ) -> Result<(), String> {
-    if !old_shortcut.is_empty() {
+    let new_key = if new_shortcut.is_empty() { "Alt+V".to_string() } else { new_shortcut };
+
+    if !old_shortcut.is_empty() && old_shortcut != new_key {
         let _ = unregister_keyboard_shortcut(&app, &old_shortcut);
     }
 
@@ -311,7 +313,7 @@ pub fn update_shortcut(
     #[cfg(target_os = "windows")]
     {
         let old_is_win = old_shortcut.starts_with("Super+");
-        let new_is_win = new_shortcut.starts_with("Super+");
+        let new_is_win = new_key.starts_with("Super+");
         if !old_is_win && new_is_win {
             install_keyboard_hook();
         } else if old_is_win && !new_is_win {
@@ -319,12 +321,10 @@ pub fn update_shortcut(
         }
     }
 
-    if !new_shortcut.is_empty() {
-        // Skip global-shortcut registration for Win-key combos — the keyboard hook handles them
-        if !new_shortcut.starts_with("Super+") {
-            register_keyboard_shortcut(&app, &new_shortcut)
-                .map_err(|e| format!("Failed to register shortcut: {}", e))?;
-        }
+    // Skip global-shortcut registration for Win-key combos — the keyboard hook handles them
+    if !new_key.starts_with("Super+") {
+        register_keyboard_shortcut(&app, &new_key)
+            .map_err(|e| format!("Failed to register shortcut: {}", e))?;
     }
     Ok(())
 }

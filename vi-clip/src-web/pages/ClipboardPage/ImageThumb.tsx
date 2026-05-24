@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { useClipboardStore } from "../../stores/clipboardStore";
 
+import type { ClipboardRecord } from "../../types";
+
 interface ImageThumbProps {
-  record: { id: string; content: string };
+  record: ClipboardRecord;
   onClick: (e: React.MouseEvent) => void;
 }
 
 export function ImageThumb({ record, onClick }: ImageThumbProps) {
-  const { getThumbnail, thumbnailCache } = useClipboardStore();
+  const getThumbnail = useClipboardStore((s) => s.getThumbnail);
+  const thumbnailCache = useClipboardStore((s) => s.thumbnailCache);
   const [src, setSrc] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -19,7 +22,7 @@ export function ImageThumb({ record, onClick }: ImageThumbProps) {
       setSrc(cached);
       return;
     }
-    getThumbnail(record as any).then((dataUrl) => {
+    getThumbnail(record).then((dataUrl) => {
       if (dataUrl) setSrc(dataUrl);
     });
   }, [visible, record.id]);

@@ -1,14 +1,7 @@
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Icons } from "../../components/Icons";
-
-interface PhraseGroup {
-  id: string;
-  name: string;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
+import type { PhraseGroup } from "../../types";
 
 interface ManageGroupsDialogProps {
   open: boolean;

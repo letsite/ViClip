@@ -31,3 +31,12 @@ src-tauri/target
 
 # Vite cache
 .vite
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Environment files
+.env
+.env.*
+.env.local

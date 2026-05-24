@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -6,44 +6,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { useClipboardStore, type ClipType } from "../../stores/clipboardStore";
 import { usePhraseStore } from "../../stores/phraseStore";
 import { resolveTheme, type ThemeMode, useSettingsStore } from "../../stores/settingsStore";
+import { useThemeSync } from "../../hooks/useThemeSync";
+import { formatTime } from "../../utils";
+import { ImageThumb } from "../../pages/ClipboardPage/ImageThumb";
 import i18n from "../../i18n";
 
 type TabKey = "clipboard" | "phrases";
 
 const MAX_ITEMS = 2000;
-
-function formatTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  return `${month}/${day} ${hours}:${minutes}`;
-}
-
-function ImageThumb({ recordId }: { recordId: string }) {
-  const [src, setSrc] = useState("");
-  const { records, getThumbnail } = useClipboardStore();
-
-  useEffect(() => {
-    const record = records.find((r) => r.id === recordId);
-    if (!record || record.type !== "image") return;
-    let cancelled = false;
-    getThumbnail(record).then((url) => {
-      if (!cancelled && url) setSrc(url);
-    });
-    return () => { cancelled = true; };
-  }, [recordId, records, getThumbnail]);
-
-  if (!src) return <span className="radial-menu-item-text">…</span>;
-  return (
-    <img
-      src={src}
-      alt=""
-      style={{ width: 48, height: 36, objectFit: "cover", borderRadius: 5 }}
-    />
-  );
-}
 
 export default function RadialMenu() {
   const { t } = useTranslation();
@@ -65,28 +35,9 @@ export default function RadialMenu() {
   useEffect(() => { clipboardCategoryRef.current = clipboardCategory; }, [clipboardCategory]);
   useEffect(() => { phraseGroupIdRef.current = phraseGroupId; }, [phraseGroupId]);
 
+  useThemeSync();
+
   useEffect(() => {
-    let mqCleanup: (() => void) | undefined;
-
-    const applyTheme = (mode: string) => {
-      document.documentElement.setAttribute("data-theme", resolveTheme(mode as ThemeMode));
-
-      if (mqCleanup) { mqCleanup(); mqCleanup = undefined; }
-      if (mode === "auto") {
-        const mq = window.matchMedia("(prefers-color-scheme: dark)");
-        const handler = () => {
-          document.documentElement.setAttribute("data-theme", resolveTheme("auto" as ThemeMode));
-        };
-        mq.addEventListener("change", handler);
-        mqCleanup = () => mq.removeEventListener("change", handler);
-      }
-    };
-
-    // Initial theme load
-    invoke<string>("get_setting", { key: "theme" }).then((theme) => {
-      if (theme) applyTheme(theme);
-    }).catch(() => {});
-
     // Initial language load
     invoke<string>("get_setting", { key: "language" }).then((lang) => {
       if (lang && lang !== i18n.language) {
@@ -99,11 +50,6 @@ export default function RadialMenu() {
     useClipboardStore.getState().init();
     usePhraseStore.getState().init();
 
-    let unlistenTheme: UnlistenFn | undefined;
-    listen<{ theme: string }>("theme-changed", (e) => {
-      applyTheme(e.payload.theme);
-    }).then((fn) => { unlistenTheme = fn; });
-
     let unlistenLang: UnlistenFn | undefined;
     listen<{ language: string }>("language-changed", (e) => {
       if (e.payload.language !== i18n.language) {
@@ -112,9 +58,7 @@ export default function RadialMenu() {
     }).then((fn) => { unlistenLang = fn; });
 
     return () => {
-      if (unlistenTheme) unlistenTheme();
       if (unlistenLang) unlistenLang();
-      if (mqCleanup) mqCleanup();
     };
   }, []);
 
@@ -252,27 +196,31 @@ export default function RadialMenu() {
     }
   }, [visible, activeTab, phraseGroupId, phraseGroups, loadPhrases]);
 
-  const filteredRecords = clipboardCategory === "all"
-    ? records
-    : records.filter((r) => r.type === clipboardCategory);
+  const filteredRecords = useMemo(() =>
+    clipboardCategory === "all"
+      ? records
+      : records.filter((r) => r.type === clipboardCategory),
+    [records, clipboardCategory]);
 
-  const items = activeTab === "clipboard"
-    ? filteredRecords.slice(0, MAX_ITEMS).map((r) => ({
-        id: r.id,
-        content: r.type === "image"
-          ? `[${t("clipboard.image")}]`
-          : r.type === "file"
-            ? r.content.replace(/\\/g, "/").split("/").pop() || r.content
-            : r.content,
-        type: r.type,
-        createdAt: r.created_at,
-      }))
-    : phrases.map((p) => ({
-        id: p.id,
-        content: p.content,
-        type: "phrase" as string,
-        title: p.title,
-      }));
+  const items = useMemo(() =>
+    activeTab === "clipboard"
+      ? filteredRecords.slice(0, MAX_ITEMS).map((r) => ({
+          id: r.id,
+          content: r.type === "image"
+            ? `[${t("clipboard.image")}]`
+            : r.type === "file"
+              ? r.content.replace(/\\/g, "/").split("/").pop() || r.content
+              : r.content,
+          type: r.type,
+          createdAt: r.created_at,
+        }))
+      : phrases.map((p) => ({
+          id: p.id,
+          content: p.content,
+          type: "phrase" as string,
+          title: p.title,
+        })),
+    [activeTab, filteredRecords, phrases, t]);
 
   const categories = activeTab === "clipboard"
     ? [
@@ -342,20 +290,23 @@ export default function RadialMenu() {
                   }
                 }}
                 onClick={() => {
-                  console.error("[radial] click, clickMode=", clickModeRef.current);
                   if (clickModeRef.current !== "double") {
                     handleItemClick(item.id);
                   }
                 }}
                 onDoubleClick={() => {
-                  console.error("[radial] dblclick, clickMode=", clickModeRef.current);
                   if (clickModeRef.current === "double") {
                     handleItemClick(item.id);
                   }
                 }}
               >
                 {item.type === "image" ? (
-                  <ImageThumb recordId={item.id} />
+                  (() => {
+                    const imgRecord = records.find((r) => r.id === item.id);
+                    return imgRecord ? (
+                      <ImageThumb record={imgRecord} onClick={() => {}} />
+                    ) : <span className="radial-menu-item-text">…</span>;
+                  })()
                 ) : (
                   <span className="radial-menu-item-text">
                     {item.content.length > 80

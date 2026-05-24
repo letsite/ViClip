@@ -5,6 +5,7 @@ mod preview_lock;
 mod shortcut;
 mod translator;
 mod tray;
+mod updater;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -23,16 +24,81 @@ struct AppInfo {
 
 struct PreviewImageStore(Mutex<HashMap<String, String>>);
 
+impl PreviewImageStore {
+    const MAX_ENTRIES: usize = 32;
+
+    fn insert(&self, token: String, base64: String) {
+        let mut map = self.0.lock().unwrap();
+        if map.len() >= Self::MAX_ENTRIES {
+            // Evict oldest entry
+            if let Some(oldest) = map.keys().next().cloned() {
+                map.remove(&oldest);
+            }
+        }
+        map.insert(token, base64);
+    }
+
+    fn remove(&self, token: &str) -> Option<String> {
+        self.0.lock().unwrap().remove(token)
+    }
+}
+
 #[tauri::command]
 fn store_preview_image(state: tauri::State<'_, PreviewImageStore>, base64: String) -> String {
     let token = Uuid::new_v4().to_string();
-    state.0.lock().unwrap().insert(token.clone(), base64);
+    state.insert(token.clone(), base64);
     token
 }
 
 #[tauri::command]
 fn fetch_preview_image(state: tauri::State<'_, PreviewImageStore>, token: String) -> Option<String> {
-    state.0.lock().unwrap().remove(&token)
+    state.remove(&token)
+}
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_file_location(path: String) -> Result<(), String> {
+    let exists = std::path::Path::new(&path).exists();
+    if !exists {
+        return Err(format!("File not found: {}", path));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Canonicalize to get absolute path with backslashes for explorer
+        let abs = std::path::Path::new(&path)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(&path));
+        std::process::Command::new("explorer")
+            .args(["/select,", &abs.to_string_lossy()])
+            .spawn()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -234,12 +300,11 @@ pub fn run() {
             }
 
             if let Ok(key) = db::get_setting(app.handle().clone(), "shortcut_key".to_string()) {
-                if !key.is_empty() {
-                    if key.starts_with("Super+") {
-                        shortcut::install_keyboard_hook();
-                    } else if let Err(e) = shortcut::register_keyboard_shortcut(app.handle(), &key) {
-                        log::warn!("Failed to register keyboard shortcut '{}': {}", key, e);
-                    }
+                let shortcut = if key.is_empty() { "Alt+V".to_string() } else { key };
+                if shortcut.starts_with("Super+") {
+                    shortcut::install_keyboard_hook();
+                } else if let Err(e) = shortcut::register_keyboard_shortcut(app.handle(), &shortcut) {
+                    log::warn!("Failed to register keyboard shortcut '{}': {}", shortcut, e);
                 }
             }
 
@@ -292,6 +357,10 @@ pub fn run() {
             apply_preview_backdrop,
             store_preview_image,
             fetch_preview_image,
+            open_url,
+            open_file_location,
+            updater::check_update,
+            updater::download_and_install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

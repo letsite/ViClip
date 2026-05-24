@@ -4,6 +4,7 @@ import i18n from "../../i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, currentMonitor, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
+import { useThemeSync } from "../../hooks/useThemeSync";
 
 const TITLE_BAR_HEIGHT = 32;
 
@@ -98,14 +99,11 @@ export default function ImagePreview() {
     };
   }, []);
 
-  // Sync theme and language with main window
+  useThemeSync();
+
+  // Sync language with main window
   useEffect(() => {
     const sync = async () => {
-      try {
-        const theme = await invoke<string>("get_setting", { key: "theme" });
-        if (theme) document.documentElement.setAttribute("data-theme", theme);
-      } catch { /* ignore */ }
-
       try {
         const lang = await invoke<string>("get_setting", { key: "language" });
         if (lang && lang !== i18n.language) {
@@ -113,20 +111,13 @@ export default function ImagePreview() {
         }
       } catch { /* ignore */ }
 
-      const unlistenTheme = await listen<{ theme: string }>("theme-changed", (event) => {
-        document.documentElement.setAttribute("data-theme", event.payload.theme);
-      });
-
       const unlistenLang = await listen<{ language: string }>("language-changed", (event) => {
         if (event.payload.language !== i18n.language) {
           i18n.changeLanguage(event.payload.language);
         }
       });
 
-      return () => {
-        unlistenTheme();
-        unlistenLang();
-      };
+      return () => { unlistenLang(); };
     };
     const cleanupPromise = sync();
 

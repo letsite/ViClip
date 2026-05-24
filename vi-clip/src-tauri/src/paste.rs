@@ -377,10 +377,12 @@ pub fn paste_text(app: AppHandle, text: String) -> Result<(), String> {
 
     let handle = app.clone();
     debug_log!("paste_text spawning paste thread...");
-    std::thread::spawn(move || {
+    if std::thread::Builder::new().spawn(move || {
         let _guard = PasteGuard;
         paste_with_defocus(&handle).ok();
-    });
+    }).is_err() {
+        PASTING.store(false, Ordering::SeqCst);
+    }
 
     debug_log!("paste_text returning Ok");
     Ok(())
@@ -400,7 +402,7 @@ pub fn paste_image(app: AppHandle, path: String) -> Result<(), String> {
     emit_toast(&app, "image", file_name);
 
     let handle = app.clone();
-    std::thread::spawn(move || {
+    if std::thread::Builder::new().spawn(move || {
         let _guard = PasteGuard;
 
         let (rgba, w, h, png) = {
@@ -456,7 +458,9 @@ pub fn paste_image(app: AppHandle, path: String) -> Result<(), String> {
 
         crate::clipboard::sync_monitor_cache(&handle);
         paste_with_defocus(&handle).ok();
-    });
+    }).is_err() {
+        PASTING.store(false, Ordering::SeqCst);
+    }
 
     Ok(())
 }
@@ -483,7 +487,7 @@ pub fn paste_file(app: AppHandle, path: String) -> Result<(), String> {
     emit_toast(&app, "file", file_name);
 
     let handle = app.clone();
-    std::thread::spawn(move || {
+    if std::thread::Builder::new().spawn(move || {
         let _guard = PasteGuard;
 
         #[cfg(target_os = "windows")]
@@ -504,7 +508,9 @@ pub fn paste_file(app: AppHandle, path: String) -> Result<(), String> {
 
         crate::clipboard::sync_monitor_cache(&handle);
         paste_with_defocus(&handle).ok();
-    });
+    }).is_err() {
+        PASTING.store(false, Ordering::SeqCst);
+    }
 
     Ok(())
 }

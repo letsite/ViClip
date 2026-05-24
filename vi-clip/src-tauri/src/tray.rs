@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 pub struct TrayState {
     pub tray: Mutex<Option<tauri::tray::TrayIcon>>,
@@ -79,18 +80,57 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             let menu_id = event.id().as_ref();
             match menu_id {
                 "website" => {
-                    let url = if crate::db::get_setting_sync(app, "language")
-                        .unwrap_or_else(|| "zh-CN".to_string())
-                        .starts_with("en")
-                    {
-                        "https://github.com/wwnetboy/ViClip"
-                    } else {
-                        "https://github.com/wwnetboy/ViClip"
-                    };
-                    let _ = open::that(url);
+                    let _ = open::that("https://github.com/wwnetboy/ViClip");
                 }
                 "check_update" => {
-                    let _ = open::that("https://github.com/wwnetboy/ViClip/releases");
+                    let app_handle = app.clone();
+                    let is_cn = crate::db::get_setting_sync(&app_handle, "language")
+                        .map(|l| !l.starts_with("en"))
+                        .unwrap_or(true);
+                    tauri::async_runtime::spawn(async move {
+                        let (title, msg) = match crate::updater::check_update().await {
+                            Ok(info) if info.has_update => {
+                                let (t, m, ok_btn, cancel_btn, err_prefix) = if is_cn {
+                                    ("ViClip 更新", format!("发现新版本 v{}（当前 v{}）。\n\n是否下载并安装？", info.latest_version, info.current_version), "下载", "取消", "下载失败")
+                                } else {
+                                    ("ViClip Update", format!("v{} is available (current v{}).\n\nDownload and install?", info.latest_version, info.current_version), "Download", "Cancel", "Download failed")
+                                };
+                                let dialog = app_handle.dialog();
+                                dialog.message(m)
+                                    .title(t)
+                                    .buttons(MessageDialogButtons::OkCancelCustom(ok_btn.to_string(), cancel_btn.to_string()))
+                                    .show(move |confirmed| {
+                                        if confirmed {
+                                            let handle = app_handle.clone();
+                                            let url = info.download_url.clone();
+                                            tauri::async_runtime::spawn(async move {
+                                                if let Err(e) = crate::updater::download_and_install_update(url).await {
+                                                    let d = handle.dialog();
+                                                    d.message(format!("{}: {}", err_prefix, e)).title("ViClip").show(|_| {});
+                                                }
+                                            });
+                                        }
+                                    });
+                                return;
+                            }
+                            Ok(_) => {
+                                if is_cn {
+                                    ("ViClip".to_string(), "已是最新版本".to_string())
+                                } else {
+                                    ("ViClip".to_string(), "You're up to date".to_string())
+                                }
+                            }
+                            Err(e) => {
+                                if is_cn {
+                                    ("ViClip".to_string(), format!("检查更新失败：{}", e))
+                                } else {
+                                    ("ViClip".to_string(), format!("Update check failed: {}", e))
+                                }
+                            }
+                        };
+                        let dialog = app_handle.dialog();
+                        dialog.message(msg).title(title).show(|_| {});
+                    });
                 }
                 "guide" => {
                     let _ = open::that("https://github.com/wwnetboy/ViClip/wiki");
