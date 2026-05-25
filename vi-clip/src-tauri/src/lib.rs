@@ -303,9 +303,6 @@ pub fn run() {
             db::init_db(app.handle())?;
             db::prune_old_records(app.handle()).ok();
 
-            // Always start with light theme
-            let _ = db::set_setting(app.handle().clone(), "theme".to_string(), "light".to_string());
-
             // Autostart: enable on first run (default ON), repair --hidden arg on existing installs.
             // Uses a DB marker so we don't re-enable after the user explicitly disables it.
             let autostart = app.autolaunch();
