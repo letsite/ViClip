@@ -121,10 +121,40 @@ fn get_app_info() -> AppInfo {
     }
 }
 
+// Undocumented but stable API for acrylic blur on Windows 10.
+// SetWindowCompositionAttribute is exported by user32.dll since Windows 10.
+#[repr(C)]
+struct AccentPolicy {
+    accent_state: i32,
+    accent_flags: i32,
+    gradient_color: i32, // ABGR format
+    animation_id: i32,
+}
+
+#[repr(C)]
+struct WindowCompositionAttribData {
+    attrib: i32,
+    pv_data: *const AccentPolicy,
+    cb_data: i32,
+}
+
+extern "system" {
+    fn SetWindowCompositionAttribute(
+        hwnd: isize,
+        data: *const WindowCompositionAttribData,
+    ) -> i32;
+}
+
+const WCA_ACCENT_POLICY: i32 = 19;
+const ACCENT_ENABLE_BLURBEHIND: i32 = 3;
+
 #[cfg(target_os = "windows")]
 fn apply_backdrop_effect(window: &tauri::WebviewWindow) {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE};
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute,
+        DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
+    };
 
     let hwnd = window.hwnd().unwrap_or_default();
     if hwnd.is_invalid() {
@@ -133,6 +163,7 @@ fn apply_backdrop_effect(window: &tauri::WebviewWindow) {
 
     let hwnd = HWND(hwnd.0);
 
+    // Windows 11: use system backdrop (DWMSBT_TABBEDWINDOW = 3, Mica Alt)
     let backdrop_type: i32 = 3;
     let result = unsafe {
         DwmSetWindowAttribute(
@@ -143,22 +174,37 @@ fn apply_backdrop_effect(window: &tauri::WebviewWindow) {
         )
     };
 
-    if let Err(e) = result {
-        log::warn!("Failed to set DWM backdrop type: {:?}", e);
+    if result.is_err() {
+        // Windows 10: SetWindowCompositionAttribute with ACCENT_ENABLE_BLURBEHIND
+        // provides the acrylic blur effect that works with layered windows.
+        log::info!("System backdrop not available, applying Win10 acrylic blur");
+        let accent = AccentPolicy {
+            accent_state: ACCENT_ENABLE_BLURBEHIND,
+            accent_flags: 0x20 | 0x40 | 0x80 | 0x100, // gradient falloff on all 4 edges
+            gradient_color: 0,
+            animation_id: 0,
+        };
+        let data = WindowCompositionAttribData {
+            attrib: WCA_ACCENT_POLICY,
+            pv_data: &accent,
+            cb_data: std::mem::size_of::<AccentPolicy>() as i32,
+        };
+        unsafe {
+            if SetWindowCompositionAttribute(hwnd.0 as isize, &data) == 0 {
+                log::warn!("SetWindowCompositionAttribute (Win10 blur) failed");
+            }
+        }
     }
 
+    // Rounded corners (Windows 11 only, fails silently on Windows 10)
     let corner_preference: i32 = 2; // DWMWCP_ROUND
-    let result = unsafe {
-        DwmSetWindowAttribute(
+    unsafe {
+        let _ = DwmSetWindowAttribute(
             hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE,
             &corner_preference as *const i32 as *const _,
             std::mem::size_of::<i32>() as u32,
-        )
-    };
-
-    if let Err(e) = result {
-        log::warn!("Failed to set DWM corner preference: {:?}", e);
+        );
     }
 }
 
