@@ -46,6 +46,7 @@
   --text-secondary: #8E8E93;
   --text-tertiary: #C7C7CC;
   --separator: rgba(0, 0, 0, 0.08);
+  --window-border: rgba(0, 0, 0, 0.05);
   --accent: #007AFF;
   --accent-bg: rgba(0, 122, 255, 0.1);
   --danger: #FF3B30;
@@ -109,6 +110,7 @@
   --text-secondary: #8899B4;
   --text-tertiary: #4A6080;
   --separator: rgba(255, 255, 255, 0.08);
+  --window-border: rgba(255, 255, 255, 0.05);
   --shadow: 0 1px 3px rgba(0,0,0,0.4);
   --glass-bg: #0D1A30;
   --accent: #4DA3FF;
@@ -152,6 +154,7 @@
   --text-secondary: #A1A1A6;
   --text-tertiary: #48484A;
   --separator: rgba(255, 255, 255, 0.08);
+  --window-border: rgba(255, 255, 255, 0.05);
   --shadow: 0 1px 3px rgba(0,0,0,0.3);
   --glass-bg: rgba(0, 0, 0, 0.4);
   --sidebar-bg: rgba(30, 30, 30, 0.60);
@@ -193,6 +196,7 @@
   --text-secondary: #A1A1A6;
   --text-tertiary: #636366;
   --separator: rgba(255, 255, 255, 0.1);
+  --window-border: rgba(255, 255, 255, 0.06);
   --accent: #0A84FF;
   --accent-bg: rgba(10, 132, 255, 0.15);
   --shadow: 0 2px 8px rgba(0,0,0,0.4);

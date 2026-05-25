@@ -47,6 +47,18 @@ function App() {
 
   useThemeSync(themeMode);
 
+  // Track window focus state for Mica Alt fallback compensation
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const update = (focused: boolean) => {
+      document.documentElement.setAttribute("data-window-focused", focused ? "true" : "false");
+    };
+    // Initialize: assume focused (window just loaded)
+    update(true);
+    const u1 = win.onFocusChanged(({ payload: focused }) => update(focused));
+    return () => { u1.then((fn) => fn()); };
+  }, []);
+
   const SIDEBAR_MIN = 60;
   const SIDEBAR_MAX = 130;
   const SIDEBAR_DEFAULT = 60;

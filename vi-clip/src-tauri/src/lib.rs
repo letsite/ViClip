@@ -105,7 +105,7 @@ fn open_file_location(path: String) -> Result<(), String> {
 fn apply_preview_backdrop(app: tauri::AppHandle, window_label: String) {
     #[cfg(target_os = "windows")]
     if let Some(window) = app.get_webview_window(&window_label) {
-        apply_backdrop_effect(&window);
+        apply_backdrop_effect(&window, true);
     }
     let _ = (app, window_label);
 }
@@ -149,7 +149,7 @@ const WCA_ACCENT_POLICY: i32 = 19;
 const ACCENT_ENABLE_BLURBEHIND: i32 = 3;
 
 #[cfg(target_os = "windows")]
-fn apply_backdrop_effect(window: &tauri::WebviewWindow) {
+fn apply_backdrop_effect(window: &tauri::WebviewWindow, use_win10_fallback: bool) -> bool {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute,
@@ -158,14 +158,14 @@ fn apply_backdrop_effect(window: &tauri::WebviewWindow) {
 
     let hwnd = window.hwnd().unwrap_or_default();
     if hwnd.is_invalid() {
-        return;
+        return false;
     }
 
     let hwnd = HWND(hwnd.0);
 
     // Windows 11: use system backdrop (DWMSBT_TABBEDWINDOW = 3, Mica Alt)
     let backdrop_type: i32 = 3;
-    let result = unsafe {
+    let backdrop_result = unsafe {
         DwmSetWindowAttribute(
             hwnd,
             DWMWA_SYSTEMBACKDROP_TYPE,
@@ -173,27 +173,10 @@ fn apply_backdrop_effect(window: &tauri::WebviewWindow) {
             std::mem::size_of::<i32>() as u32,
         )
     };
+    let is_win11 = backdrop_result.is_ok();
 
-    if result.is_err() {
-        // Windows 10: SetWindowCompositionAttribute with ACCENT_ENABLE_BLURBEHIND
-        // provides the acrylic blur effect that works with layered windows.
-        log::info!("System backdrop not available, applying Win10 acrylic blur");
-        let accent = AccentPolicy {
-            accent_state: ACCENT_ENABLE_BLURBEHIND,
-            accent_flags: 0x20 | 0x40 | 0x80 | 0x100, // gradient falloff on all 4 edges
-            gradient_color: 0,
-            animation_id: 0,
-        };
-        let data = WindowCompositionAttribData {
-            attrib: WCA_ACCENT_POLICY,
-            pv_data: &accent,
-            cb_data: std::mem::size_of::<AccentPolicy>() as i32,
-        };
-        unsafe {
-            if SetWindowCompositionAttribute(hwnd.0 as isize, &data) == 0 {
-                log::warn!("SetWindowCompositionAttribute (Win10 blur) failed");
-            }
-        }
+    if !is_win11 && use_win10_fallback {
+        apply_win10_blur_behind(hwnd);
     }
 
     // Rounded corners (Windows 11 only, fails silently on Windows 10)
@@ -205,6 +188,28 @@ fn apply_backdrop_effect(window: &tauri::WebviewWindow) {
             &corner_preference as *const i32 as *const _,
             std::mem::size_of::<i32>() as u32,
         );
+    }
+
+    is_win11
+}
+
+#[cfg(target_os = "windows")]
+fn apply_win10_blur_behind(hwnd: windows::Win32::Foundation::HWND) {
+    let accent = AccentPolicy {
+        accent_state: ACCENT_ENABLE_BLURBEHIND,
+        accent_flags: 0,
+        gradient_color: 0,
+        animation_id: 0,
+    };
+    let data = WindowCompositionAttribData {
+        attrib: WCA_ACCENT_POLICY,
+        pv_data: &accent,
+        cb_data: std::mem::size_of::<AccentPolicy>() as i32,
+    };
+    unsafe {
+        if SetWindowCompositionAttribute(hwnd.0 as isize, &data) == 0 {
+            log::warn!("SetWindowCompositionAttribute (Win10 blur-behind) failed");
+        }
     }
 }
 
@@ -238,7 +243,58 @@ pub fn run() {
             {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
-                    apply_backdrop_effect(&window);
+
+        // Remove window border styles that create a 1px line on Win10.
+        // These styles are added by Tauri for resizable undecorated windows.
+        {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GetWindowLongW, SetWindowLongW, SetWindowPos,
+                GWL_STYLE, GWL_EXSTYLE,
+                WS_THICKFRAME, WS_BORDER, WS_DLGFRAME,
+                WS_EX_CLIENTEDGE, WS_EX_STATICEDGE, WS_EX_WINDOWEDGE,
+                SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOZORDER, SWP_NOSIZE,
+            };
+            let hwnd = HWND(window.hwnd().unwrap().0);
+
+            let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
+            let remove_style = WS_THICKFRAME.0 as i32 | WS_BORDER.0 as i32 | WS_DLGFRAME.0 as i32;
+            let new_style = style & !remove_style;
+            if new_style != style {
+                unsafe { SetWindowLongW(hwnd, GWL_STYLE, new_style) };
+            }
+
+            let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
+            let remove_ex = WS_EX_CLIENTEDGE.0 as i32 | WS_EX_STATICEDGE.0 as i32 | WS_EX_WINDOWEDGE.0 as i32;
+            let new_ex = ex_style & !remove_ex;
+            if new_ex != ex_style {
+                unsafe { SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex) };
+            }
+
+            if new_style != style || new_ex != ex_style {
+                unsafe {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        HWND(std::ptr::null_mut()),
+                        0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+                    );
+                }
+                log::info!("Removed window border styles from main window");
+            }
+        }
+
+        // Win11: DWM system backdrop (Mica Alt) + DWM rounded corners.
+        // Win10: ACCENT_ENABLE_BLURBEHIND only — SetWindowRgn for rounded
+        // corners conflicts with transparent window compositing on Win10,
+        // causing the window to show through to other windows behind it.
+        // Rounded corners on Win10 are handled via CSS border-radius and
+        // the inset box-shadow window border.
+        let is_win11 = apply_backdrop_effect(&window, false);
+        if !is_win11 {
+            use windows::Win32::Foundation::HWND;
+            apply_win10_blur_behind(HWND(window.hwnd().unwrap().0));
+        }
                 }
             }
 
@@ -250,10 +306,19 @@ pub fn run() {
             // Always start with light theme
             let _ = db::set_setting(app.handle().clone(), "theme".to_string(), "light".to_string());
 
-            // Repair autostart registry entry to ensure --hidden arg is present
+            // Autostart: enable on first run (default ON), repair --hidden arg on existing installs.
+            // Uses a DB marker so we don't re-enable after the user explicitly disables it.
             let autostart = app.autolaunch();
+            let autostart_initialized = db::get_setting(app.handle().clone(), "autostart_initialized".to_string())
+                .map(|v| v == "1")
+                .unwrap_or(false);
             if autostart.is_enabled().unwrap_or(false) {
+                // Repair existing autostart entry (ensure --hidden arg)
                 let _ = autostart.enable();
+            } else if !autostart_initialized {
+                // First run: enable autostart by default
+                let _ = autostart.enable();
+                let _ = db::set_setting(app.handle().clone(), "autostart_initialized".to_string(), "1".to_string());
             }
 
             // Periodic pruning every hour
@@ -291,7 +356,7 @@ pub fn run() {
                 .build()?;
                 let _ = radial.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
                 #[cfg(target_os = "windows")]
-                apply_backdrop_effect(&radial);
+                apply_backdrop_effect(&radial, true);
                 log::info!("Radial menu popup window created");
             }
 
@@ -362,6 +427,7 @@ pub fn run() {
                 if !minimize_to_tray {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
+                        let _ = window.set_focus();
                     }
                 }
             }
